@@ -76,19 +76,6 @@ world_map <- joinCountryData2Map(country_counts,
                                 joinCode = "NAME",
                                 nameJoinColumn = "country")
 
-mapParams <- mapCountryData(world_map, 
-                           nameColumnToPlot = "n",
-                           catMethod = "pretty",
-                           missingCountryCol = "lightgrey")
-
-# Alternatively, using leaflet for interactive map
-leaflet() %>%
-  addTiles() %>%
-  addCircleMarkers(data = data,
-                   lng = ~longitude, 
-                   lat = ~latitude,
-                   radius = ~log(n)*2,
-                   popup = ~paste(country, ": ", n, "studies"))
 
 # 5. Longitudinal Keyword Analysis
 # Define domain-specific keywords
@@ -137,8 +124,8 @@ write.csv(edge_list, "co_occurrence_network.csv", row.names = FALSE)
 dtm_lda <- DocumentTermMatrix(corpus_clean)
 dtm_lda <- removeSparseTerms(dtm_lda, 0.95)
 
-# Find optimal number of topics (example for k=5)
-lda_model <- LDA(dtm_lda, k = 5, control = list(seed = 123))
+# Find optimal number of topics (example for k=10)
+lda_model <- LDA(dtm_lda, k = 10, control = list(seed = 123))
 
 # Extract topics
 topics <- tidy(lda_model, matrix = "beta")
