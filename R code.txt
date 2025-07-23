@@ -1,0 +1,160 @@
+# Load required packages
+library(tm)
+library(stringr)
+library(tidytext)
+library(dplyr)
+library(ggplot2)
+library(wordcloud)
+library(rworldmap)
+library(leaflet)
+library(Matrix)
+library(topicmodels)
+library(tidyr)
+library(SnowballC)
+
+# 1. Data Import and Preprocessing
+# Read the CSV file containing abstracts and metadata
+data <- read.csv("research_abstracts.csv", stringsAsFactors = FALSE)
+
+# Create a corpus from the abstracts
+corpus <- Corpus(VectorSource(data$abstract))
+
+# Text preprocessing
+corpus_clean <- corpus %>%
+  tm_map(content_transformer(tolower)) %>%
+  tm_map(removePunctuation) %>%
+  tm_map(removeNumbers) %>%
+  tm_map(removeWords, stopwords("english")) %>%
+  tm_map(stripWhitespace) %>%
+  tm_map(stemDocument) # Using Porter stemmer
+
+# 2. Word Cloud Visualization
+# Create a term-document matrix
+tdm <- TermDocumentMatrix(corpus_clean)
+
+# Calculate word frequencies
+word_freq <- rowSums(as.matrix(tdm))
+word_freq <- sort(word_freq, decreasing = TRUE)
+
+# Generate word cloud
+set.seed(123)
+wordcloud(names(word_freq), word_freq, 
+          max.words = 100, 
+          colors = brewer.pal(8, "Dark2"))
+
+# 3. Publication Frequency Analysis
+# Aggregate studies by year
+pub_freq <- data %>%
+  count(year) %>%
+  filter(year >= 2015 & year <= 2025)
+
+# Visualize publication frequency
+ggplot(pub_freq, aes(x = year, y = n)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Publication Frequency (2015-2025)",
+       x = "Year",
+       y = "Number of Publications") +
+  theme_minimal()
+
+# 4. Geographical Distribution Analysis
+# Standardize country names (example)
+data <- data %>%
+  mutate(country = case_when(
+    grepl("usa|united states|america", country, ignore.case = TRUE) ~ "USA",
+    grepl("uk|britain|england", country, ignore.case = TRUE) ~ "UK",
+    TRUE ~ country
+  ))
+
+# Count studies by country
+country_counts <- data %>%
+  count(country) %>%
+  filter(!is.na(country))
+
+# Create choropleth map
+world_map <- joinCountryData2Map(country_counts,
+                                joinCode = "NAME",
+                                nameJoinColumn = "country")
+
+mapParams <- mapCountryData(world_map, 
+                           nameColumnToPlot = "n",
+                           catMethod = "pretty",
+                           missingCountryCol = "lightgrey")
+
+# Alternatively, using leaflet for interactive map
+leaflet() %>%
+  addTiles() %>%
+  addCircleMarkers(data = data,
+                   lng = ~longitude, 
+                   lat = ~latitude,
+                   radius = ~log(n)*2,
+                   popup = ~paste(country, ": ", n, "studies"))
+
+# 5. Longitudinal Keyword Analysis
+# Define domain-specific keywords
+keywords <- c("climate", "sustainability", "innovation", "policy", "technology")
+
+# Calculate keyword frequencies over time
+keyword_trends <- data %>%
+  unnest_tokens(word, abstract) %>%
+  mutate(word = wordStem(word)) %>%
+  filter(word %in% keywords) %>%
+  count(year, word) %>%
+  group_by(year) %>%
+  mutate(relative_freq = n / sum(n)) %>%
+  ungroup()
+
+# Visualize keyword trends
+ggplot(keyword_trends, aes(x = year, y = relative_freq, color = word)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Keyword Trends Over Time",
+       x = "Year",
+       y = "Relative Frequency") +
+  theme_minimal() +
+  facet_wrap(~word, scales = "free_y")
+
+# 6. Co-occurrence Network Analysis
+# Create document-term matrix
+dtm <- DocumentTermMatrix(corpus_clean)
+
+# Remove sparse terms
+dtm <- removeSparseTerms(dtm, 0.95)
+
+# Convert to matrix and calculate co-occurrence
+co_occur <- as.matrix(dtm) %*% t(as.matrix(dtm)))
+
+# Create edge list
+edge_list <- as.data.frame(as.table(co_occur)) %>%
+  filter(Freq > 0 & Var1 != Var2) %>%
+  rename(Source = Var1, Target = Var2, Weight = Freq)
+
+# Save for Gephi
+write.csv(edge_list, "co_occurrence_network.csv", row.names = FALSE)
+
+# 7. Topic Modeling (LDA)
+# Prepare DTM for LDA
+dtm_lda <- DocumentTermMatrix(corpus_clean)
+dtm_lda <- removeSparseTerms(dtm_lda, 0.95)
+
+# Find optimal number of topics (example for k=5)
+lda_model <- LDA(dtm_lda, k = 5, control = list(seed = 123))
+
+# Extract topics
+topics <- tidy(lda_model, matrix = "beta")
+
+# Show top terms per topic
+top_terms <- topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+# Visualize topics
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  scale_y_reordered() +
+  labs(title = "Top Terms in Each Topic")
